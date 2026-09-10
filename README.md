@@ -24,8 +24,11 @@ python3 elpass_to_1password.py input.json -o export.1pux
 | `--vault-name` | 保险库名字，默认 `Elpass` |
 | `--account-name` | 账号名字，默认 `Elpass Import` |
 | `--email` | 账号邮箱，可以留空 |
+| `--import-tag` | 每个条目加的标签，默认 `elpass`，传空字符串则不加 |
+| `--attachments {inline,items,skip}` | 附件怎么导，见下文，默认 `inline` |
+| `--attachments-dir` | 附件目录，默认是「输入文件名 + `.attachments`」 |
 | `--unmapped {auto,all,none}` | 没法映射的属性怎么办，见下文，默认 `auto` |
-| `--skip-archived` | 不导出 `archived: true` 的条目（默认是导出成回收站条目） |
+| `--skip-archived` | 不导出 `archived: true` 的条目（默认是导出成 1Password 的归档条目） |
 | `--dump-json` | 额外把 `export.data` 写一份出来，方便肉眼核对 |
 | `--show-mapping` | 打印字段映射表后退出 |
 
@@ -34,9 +37,9 @@ python3 elpass_to_1password.py input.json -o export.1pux
 就是个 zip 包：
 
 ```
-export.attributes   导出元信息（version 3）
+export.attributes   导出元信息（version 3，timestamp 是 Unix 秒）
 export.data         accounts → vaults → items 的全部数据
-files/              附件，本脚本不产生
+files/              附件本体，文件名是 <documentId>___<原文件名>
 ```
 
 ## 支持的条目类型
@@ -50,6 +53,7 @@ Elpass 的 `_type` 对应 1Password 的分类（`categoryUuid`）：
 | `securenote` / `note` | 安全备注 `003` |
 | `bankcard` / `card` | 银行卡 `002` |
 | `identity` | 身份 `004` |
+| `identification` | 按 `identificationType` 挑：护照 `106`、驾照 `103`、社保号 `108`，其余（身份证等）当安全备注 `003` |
 
 另外还预置了服务器、数据库、护照、会员卡等一堆映射，见代码里的 `TYPE_TO_CATEGORY`。碰到不认识的 `_type` 会兜底成登录项或安全备注，并在 stderr 提示。
 
@@ -62,11 +66,15 @@ Elpass 的 `_type` 对应 1Password 的分类（`categoryUuid`）：
 | `username` / `password` | `details.loginFields`（密码分类走 `details.password`，其它分类落到区块字段） |
 | `notes` | `details.notesPlain` |
 | `domains` | `overview.url` + `overview.urls[]`，没写协议的自动补 `https://` |
-| `otpURL` | 区块字段 `value.totp`，1Password 会真的算验证码 |
-| `tags` | `overview.tags` |
-| `customFields[]` | 区块字段，`sensitive: true` → `value.concealed`，否则 `value.string` |
+| `otpURL` | 区块字段 `value.totp`，字段 id 带 `TOTP_` 前缀，1Password 会真的算验证码 |
+| `tags` | `overview.tags`，另外每条都加一个 `elpass` 标签，导入后好筛 |
+| `customFields[]` | 区块字段，`sensitive: true` → `value.concealed`，否则 `value.string`；缺 `value` 当空值 |
+| `otherFields` | 数组时同 `customFields`；对象时每个键一个文本字段，`issuingBank` 见下表 |
+| `pin` | 区块字段，银行卡用 1Password 的固定 id `pin` |
+| `identificationType` / `identificationNumber` | 区块字段 `identification type` / `identification number`（号码按敏感信息存 concealed） |
+| `attachments[]` | 区块字段 `value.file` + zip 里的 `files/<documentId>__<原文件名>`，见下文 |
 | `favIdx` | `item.favIndex` |
-| `archived` | `item.trashed`（Elpass 的归档就是 1Password 的回收站） |
+| `archived` | `item.state`（`archived` / `active`，1Password 原生的归档状态） |
 | `passwordHistories[]` | `details.passwordHistory[]`，`voidDateTimestamp` → `time` |
 | `createdAt` / `updatedAt` | `item.createdAt` / `item.updatedAt` |
 
@@ -79,14 +87,40 @@ Elpass 的 `_type` 对应 1Password 的分类（`categoryUuid`）：
 | `cardNumber` | `ccnum`，`value.creditCardNumber` |
 | `cardVerificationCode` | `cvv`，`value.concealed` |
 | `cardExpiryDateYear` + `cardExpiryDateMonth` | `expiry`，`value.monthYear`（整数 `YYYYMM`） |
+| `pin` | `pin`，落在「Additional Details」区块 |
+| `otherFields.issuingBank` | `bank`（发卡行），落在「Contact Information」区块 |
+
+`otherFields` 里没有专门映射的键，按普通文本字段导入，并在跑完后列出来 —— 看到了告诉我，可以再往模板里加。
+
+### 附件
+
+Elpass 的 JSON 里只有附件的元信息，本体在**输入文件名后面加 `.attachments`** 的目录里，按附件 uuid 分子目录：
+
+```
+export.json
+export.json.attachments/
+  11111111-2222-3333-4444-555555555555/id_ed25519
+  66666666-7777-8888-9999-AAAAAAAAAAAA/license.pdf
+```
+
+脚本会自动找这个目录（也可以用 `--attachments-dir` 指定），把文件本体打进 `.1pux` 的 `files/<documentId>__<原文件名>`。子目录优先按附件 uuid 找，找不到再按条目 uuid 找；目录里优先取跟 `fileName` 同名的文件，只有一个文件时就取那个。
+
+`--attachments` 决定附件怎么挂：
+
+- `inline`（默认）附件挂在原条目上，是一个 `value.file` 字段。对着 1Password 真实导出验证过，就是这种形态。
+- `items` 每个附件单独建一个「文档」条目，用 `details.documentAttributes` 引用。附件跟原条目分家，靠标题、标签和备注里的「来自条目「xxx」」关联。
+- `skip` 不打包本体，只把元信息留在「Elpass」区块。
+
+`fileSize` 以磁盘上的实际大小为准，对不上会警告。`fileModificationDate` 1Password 没地方放，写成了 zip 里该文件的修改时间。找不到本体的附件会警告，并把元信息留在「Elpass」区块里，方便你手动补。
 
 ### 字段顺序
 
 1Password 按数组顺序渲染字段，脚本保持输入里的原顺序，并把 `indexAtSource` 设成一致的下标。渲染顺序是：
 
 1. 用户名 / 密码（预置字段，永远最前）
-2. 无标题区块：一次性密码 → 然后 `customFields` 按原顺序
-3. 「Elpass」区块
+2. 无标题区块：一次性密码 → PIN / 证件 → `customFields` → `otherFields` → 附件
+3. 银行卡的「Additional Details」区块（PIN / 证件）
+4. 「Elpass」区块
 
 ## 没法映射的属性
 
@@ -100,7 +134,7 @@ Elpass 的 `_type` 对应 1Password 的分类（`categoryUuid`）：
 - `all` 全部保留
 - `none` 全部丢弃
 
-脚本不认识的新属性也会自动进这个区块，并在 stderr 列出来提醒你。
+脚本不认识的新属性也会自动进这个区块，并在 stderr 列出来提醒你。`customFields` / `otherFields` 要是形状对不上（不是 `[{title, value, sensitive}]` 那种数组），也会整个原样塞进来，不会硬转。
 
 ### passkey
 
@@ -113,6 +147,17 @@ Elpass 那几个 `passkey*` 属性只是 WebAuthn 凭据的元数据，没有 cr
 所以脚本**同时**在「Elpass」区块里存一份可读的原始时间（带时区偏移，比如 `2017-02-13 18:08:22 +0800`），即使被重置，信息也还在。
 
 建议先拿两三条试导一次，在 1Password 里确认效果再全量跑。
+
+## 跟 1Password 真实导出对齐
+
+字段名和结构不是照着格式说明猜的，是拿一份 1Password 自己导出的 `.1pux` 逐层比对过的 —— 两边在 `export.attributes`、`account.attrs`、`vault.attrs`、item、`overview`、`details`、`sections`、`fields`、`loginFields`、`urls[]` 每一层的键集合都一致。
+
+有两处**格式说明跟真实导出不符，以真实导出为准**：
+
+- `export.attributes` 里的时间戳键叫 `timestamp`，不是说明里写的 `createdAt`。
+- `files/` 里文件名的分隔符是**两个**下划线（`<documentId>__<原文件名>`），说明里的例子写成了三个。
+
+另外说明里的字段类型清单没有 `file`，但真实导出里确实有 `value.file` 形态的附件字段。
 
 ## 注意
 
