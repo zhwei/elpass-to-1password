@@ -6,8 +6,8 @@
 """把 Elpass 导出的 JSON 转成 1Password 的 .1pux 文件。
 
 用法：
-    uv run elpass_to_1password.py input.json -o export.1pux
-    python3 elpass_to_1password.py input.json -o export.1pux
+    uv run elpass_to_1password.py Elpass.elpassexport -o export.1pux
+    python3 elpass_to_1password.py Elpass.elpassexport -o export.1pux
 
 只用标准库，没有第三方依赖。
 
@@ -1110,6 +1110,17 @@ def load_entries(path: Path) -> list:
     raise SystemExit(f"无法识别的输入格式：{type(data).__name__}")
 
 
+def find_attachments_dir(source: Path) -> Path | None:
+    """附件目录：优先「输入文件全名 + .attachments」，其次换掉后缀的写法。"""
+    for candidate in (
+        Path(str(source) + ".attachments"),
+        source.with_suffix(".attachments"),
+    ):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
 def write_1pux(
     export_data: dict, output: Path, files: list[tuple[str, Path, int]] | None = None
 ) -> None:
@@ -1138,7 +1149,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="把 Elpass 导出的 JSON 转成 1Password 的 .1pux 文件",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("input", nargs="?", type=Path, help="Elpass 导出的 JSON 文件")
+    parser.add_argument("input", nargs="?", type=Path, help="Elpass 导出的文件（.elpassexport，内容是 JSON）")
     parser.add_argument(
         "-o", "--output", type=Path, help="输出的 .1pux 路径，默认与输入同名"
     )
@@ -1174,7 +1185,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--attachments-dir",
         type=Path,
-        help="附件目录，默认是「输入文件名 + .attachments」",
+        help="附件目录，默认找「输入文件名 + .attachments」",
     )
     parser.add_argument(
         "--dump-json", type=Path, help="额外把 export.data 写一份到这个路径，方便检查"
@@ -1197,9 +1208,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("需要指定输入文件（或用 --show-mapping 查看映射表）")
 
     entries = load_entries(args.input)
-    attachments_dir = args.attachments_dir or Path(str(args.input) + ".attachments")
-    if not attachments_dir.is_dir():
-        attachments_dir = None
+    attachments_dir = args.attachments_dir or find_attachments_dir(args.input)
     converter = Converter(
         unmapped=args.unmapped,
         skip_archived=args.skip_archived,

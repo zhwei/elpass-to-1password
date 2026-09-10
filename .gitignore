@@ -1,4 +1,7 @@
 # Elpass 导出和 1Password 导出里都是明文密码，绝对不要提交
+*.elpassexport
+*.elpassexport.attachments/
+*.attachments/
 *.json
 *.1pux
 

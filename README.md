@@ -7,14 +7,14 @@
 ## 用法
 
 ```sh
-uv run elpass_to_1password.py input.json -o export.1pux
+uv run elpass_to_1password.py Elpass.elpassexport -o export.1pux
 # 或者
-python3 elpass_to_1password.py input.json -o export.1pux
+python3 elpass_to_1password.py Elpass.elpassexport -o export.1pux
 ```
 
 然后在 1Password 桌面端「文件 → 导入」里选 1Password，把生成的 `.1pux` 喂进去。
 
-输入可以是一个 JSON 数组，也可以是 `{"items": [...]}` 这种把数组包一层的对象。
+输入是 Elpass 导出的 `.elpassexport` 文件，内容是 JSON。可以是一个数组，也可以是 `{"items": [...]}` 这种把数组包一层的对象。不校验后缀，别的后缀照样能跑。
 
 ### 命令行参数
 
@@ -26,7 +26,7 @@ python3 elpass_to_1password.py input.json -o export.1pux
 | `--email` | 账号邮箱，可以留空 |
 | `--import-tag` | 每个条目加的标签，默认 `elpass`，传空字符串则不加 |
 | `--attachments {inline,items,skip}` | 附件怎么导，见下文，默认 `inline` |
-| `--attachments-dir` | 附件目录，默认是「输入文件名 + `.attachments`」 |
+| `--attachments-dir` | 附件目录，默认找「输入文件名 + `.attachments`」 |
 | `--unmapped {auto,all,none}` | 没法映射的属性怎么办，见下文，默认 `auto` |
 | `--skip-archived` | 不导出 `archived: true` 的条目（默认是导出成 1Password 的归档条目） |
 | `--dump-json` | 额外把 `export.data` 写一份出来，方便肉眼核对 |
@@ -94,11 +94,11 @@ Elpass 的 `_type` 对应 1Password 的分类（`categoryUuid`）：
 
 ### 附件
 
-Elpass 的 JSON 里只有附件的元信息，本体在**输入文件名后面加 `.attachments`** 的目录里，按附件 uuid 分子目录：
+`.elpassexport` 里只有附件的元信息，本体在**输入文件名后面加 `.attachments`** 的目录里（也认换掉后缀的 `Elpass.attachments`），按附件 uuid 分子目录：
 
 ```
-export.json
-export.json.attachments/
+Elpass.elpassexport
+Elpass.elpassexport.attachments/
   11111111-2222-3333-4444-555555555555/id_ed25519
   66666666-7777-8888-9999-AAAAAAAAAAAA/license.pdf
 ```
@@ -161,4 +161,4 @@ Elpass 那几个 `passkey*` 属性只是 WebAuthn 凭据的元数据，没有 cr
 
 ## 注意
 
-Elpass 导出的 JSON 和生成的 `.1pux` 里都是**明文密码**，用完记得删掉，别提交到仓库里（`.gitignore` 已经挡了 `*.json` 和 `*.1pux`）。
+Elpass 导出的 `.elpassexport` 和生成的 `.1pux` 里都是**明文密码**，用完记得删掉，别提交到仓库里（`.gitignore` 已经挡了 `*.elpassexport`、`*.json` 和 `*.1pux`）。
